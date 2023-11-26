@@ -1,4 +1,4 @@
-package PersistentKVstoreGo
+package main
 
 import (
 	"bufio"
@@ -40,7 +40,7 @@ type DB interface {
 type memDB struct {
 	values *orderedmap.OrderedMap
 	mu     sync.Mutex
-	wal    walFile
+	wal    *walFile
 }
 
 func (mem *memDB) Set(key, value []byte) error {
@@ -84,10 +84,16 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	return nil, errors.New("Key doesn't exist")
 }
 
-func NewInMem() *memDB {
+func NewInMem(walFileName string) (*memDB, error) {
+	walFileInstance, err := os.Create(walFileName)
+	if err != nil {
+		return nil, err
+	}
+
 	return &memDB{
 		values: orderedmap.NewOrderedMap(),
-	}
+		wal:    &walFile{file: walFileInstance},
+	}, nil
 }
 
 type Repl struct {
@@ -178,14 +184,4 @@ func (re *Repl) Start() {
 	} else {
 		fmt.Fprintln(re.out, "Bye!")
 	}
-}
-
-func main() {
-	db := NewInMem()
-	repl := &Repl{
-		db:  db,
-		in:  os.Stdin,
-		out: os.Stdout,
-	}
-	repl.Start()
 }

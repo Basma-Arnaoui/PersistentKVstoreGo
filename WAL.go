@@ -1,4 +1,4 @@
-package PersistentKVstoreGo
+package main
 
 import (
 	"encoding/binary"
