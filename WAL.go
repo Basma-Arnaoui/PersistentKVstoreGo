@@ -1,52 +1,82 @@
 package PersistentKVstoreGo
 
 import (
-	"bufio"
-	"fmt"
-	"github.com/elliotchance/orderedmap"
+	"encoding/binary"
 	"os"
 )
 
-type walfile interface {
-	Set(key []byte, value []byte) (bool, error)
-
-	Del(key []byte) (bool, error)
-
-	flush() error
-
-	getSize() (int64, error)
-}
 type walFile struct {
-	values *orderedmap.OrderedMap
+	file      *os.File
+	size      int
+	watermark int64
 }
 
-func (wal *walFile) Set(key []byte, value []byte) (bool, error) {
-	file, err := os.OpenFile("wal.log", os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		fmt.Println("Error opening file:", err)
-		return false, err
+func writeWAL(wal *os.File, op byte, key, value []byte) error {
+	lenKey := make([]byte, 4)
+	lenValue := make([]byte, 4)
+
+	binary.LittleEndian.PutUint32(lenKey, uint32(len(key)))
+	binary.LittleEndian.PutUint32(lenValue, uint32(len(value)))
+
+	if _, err := wal.Write([]byte{op}); err != nil {
+		return err
 	}
-	defer file.Close()
-	writer := bufio.NewWriter(file)
-	toWrite := "s "
-	toWrite += string(key)
-	toWrite += "="
-	toWrite += string(value)
-	data := []byte(toWrite)
-	_, err = writer.Write(data)
-	if err != nil {
-		fmt.Println("Error writing to file:", err)
-		return false, err
+	if _, err := wal.Write(lenKey); err != nil {
+		return err
 	}
-	err = writer.Flush()
-	if err != nil {
-		fmt.Println("Error flushing buffer:", err)
-		return false, err
+	if _, err := wal.Write(key); err != nil {
+		return err
 	}
-	fmt.Println("OK")
-	return true, nil
+	if _, err := wal.Write(lenValue); err != nil {
+		return err
+	}
+	if _, err := wal.Write(value); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func main() {
+func (mem *memDB) flushToSST(sstFileName string) error {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
 
+	sstFile, err := os.Create(sstFileName)
+	if err != nil {
+		return err
+	}
+	defer sstFile.Close()
+
+	_, err = mem.wal.file.Seek(mem.wal.watermark, os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+
+	for {
+		var op byte
+		if err := binary.Read(mem.wal.file, binary.LittleEndian, &op); err != nil {
+			break
+		}
+
+		var lenKey, lenValue uint32
+		binary.Read(mem.wal.file, binary.LittleEndian, &lenKey)
+		key := make([]byte, lenKey)
+		mem.wal.file.Read(key)
+
+		binary.Read(mem.wal.file, binary.LittleEndian, &lenValue)
+		value := make([]byte, lenValue)
+		mem.wal.file.Read(value)
+
+		binary.Write(sstFile, binary.LittleEndian, lenKey)
+		sstFile.Write(key)
+		binary.Write(sstFile, binary.LittleEndian, lenValue)
+		sstFile.Write(value)
+
+		mem.wal.watermark, err = mem.wal.file.Seek(0, os.SEEK_CUR)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

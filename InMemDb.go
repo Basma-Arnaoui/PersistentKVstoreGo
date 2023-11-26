@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 )
 
 type Cmd int
@@ -32,22 +33,34 @@ const (
 
 type DB interface {
 	Set(key []byte, value []byte) error
-
 	Get(key []byte) ([]byte, error)
-
 	Del(key []byte) ([]byte, error)
 }
 
 type memDB struct {
 	values *orderedmap.OrderedMap
+	mu     sync.Mutex
+	wal    walFile
 }
 
 func (mem *memDB) Set(key, value []byte) error {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
 	mem.values.Set(string(key), value)
+	err := writeWAL(mem.wal.file, byte(Set), []byte(key), []byte(value))
+	if err != nil {
+		return err
+	}
+	fmt.Println("OK")
+
 	return nil
 }
 
 func (mem *memDB) Get(key []byte) ([]byte, error) {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
 	if v, ok := mem.values.Get(string(key)); ok {
 		return v.([]byte), nil
 	}
@@ -56,8 +69,16 @@ func (mem *memDB) Get(key []byte) ([]byte, error) {
 }
 
 func (mem *memDB) Del(key []byte) ([]byte, error) {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
 	if v, ok := mem.values.Get(string(key)); ok {
 		mem.values.Delete(string(key))
+		err := writeWAL(mem.wal.file, byte(Del), []byte(key), v.([]byte))
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println("OK")
 		return v.([]byte), nil
 	}
 	return nil, errors.New("Key doesn't exist")
@@ -167,5 +188,4 @@ func main() {
 		out: os.Stdout,
 	}
 	repl.Start()
-
 }
