@@ -5,12 +5,27 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 var (
 	sstFileNumber int
 	sstFileMutex  sync.Mutex
 )
+
+const flushInterval = time.Minute / 4
+
+func (mem *memDB) startFlushTimer() {
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			mem.flushToSST()
+		}
+	}
+}
 
 type walFile struct {
 	file      *os.File
@@ -19,7 +34,7 @@ type walFile struct {
 }
 
 const (
-	magicNumber = 123456789 // Replace with an appropriate magic number
+	magicNumber = 123456789
 )
 
 func writeWAL(wal *os.File, op byte, key, value []byte) error {
@@ -86,7 +101,8 @@ func (mem *memDB) readCommand(offset int64, wal *walFile) (int64, error) {
 	return endOffset, nil
 }
 
-func (mem *memDB) flushToSST() error {
+func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
+	fmt.Println("ghanflushiw")
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
@@ -97,7 +113,7 @@ func (mem *memDB) flushToSST() error {
 	sstFileMutex.Unlock()
 
 	// Generate SST file name with the current number
-	sstFileName := fmt.Sprintf("sst%d", currentSSTFileNumber)
+	sstFileName := fmt.Sprintf("sst%d.txt", currentSSTFileNumber)
 
 	sstFile, err := os.Create(sstFileName)
 	if err != nil {
@@ -110,7 +126,7 @@ func (mem *memDB) flushToSST() error {
 
 	// Write entry count
 	entryCount := uint32(0)
-	_, err = mem.wal.file.Seek(mem.wal.watermark, os.SEEK_SET)
+	_, err = mem.wal.file.Seek(watermark, os.SEEK_SET)
 	if err != nil {
 		return err
 	}
@@ -142,9 +158,11 @@ func (mem *memDB) flushToSST() error {
 		binary.Write(sstFile, binary.LittleEndian, uint32(len(value)))
 		sstFile.Write(value)
 
+		mem.wal.watermark, err = mem.wal.file.Seek(0, os.SEEK_CUR)
+
 		entryCount++
 	}
-
+	fmt.Println("bBBBBBB")
 	// Seek back to the beginning to write entry count
 	_, err = sstFile.Seek(int64(binary.Size(magicNumber)), os.SEEK_SET)
 	if err != nil {
@@ -152,6 +170,16 @@ func (mem *memDB) flushToSST() error {
 	}
 
 	binary.Write(sstFile, binary.LittleEndian, entryCount)
+	fmt.Println("AAAAA")
 
+	// Update the watermark to the current position after processing all commands
+	if err != nil {
+		return err
+	}
+	fmt.Println("tflusha")
 	return nil
+}
+
+func (mem *memDB) flushToSST() error {
+	return mem.flushToSSTFromWatermark(mem.wal.watermark)
 }

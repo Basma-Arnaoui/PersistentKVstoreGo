@@ -7,11 +7,13 @@ import (
 
 func main() {
 	db, err := NewInMem("wal.txt")
+
 	if err != nil {
 		fmt.Println("Error creating in-memory DB:", err)
 		return
 	}
 	defer db.wal.file.Close()
+	go db.startFlushTimer()
 
 	repl := Repl{
 		db:  db,
@@ -20,4 +22,6 @@ func main() {
 	}
 
 	repl.Start()
+	select {}
+
 }

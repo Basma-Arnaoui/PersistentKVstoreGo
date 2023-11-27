@@ -62,6 +62,7 @@ func (mem *memDB) Get(key []byte) ([]byte, error) {
 	defer mem.mu.Unlock()
 
 	if v, ok := mem.values.Get(string(key)); ok {
+		fmt.Println(mem.values.Len())
 		return v.([]byte), nil
 	}
 
