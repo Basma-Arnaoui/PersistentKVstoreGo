@@ -1,12 +1,154 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/elliotchance/orderedmap"
 	"io"
 	"os"
+	"strings"
 )
+
+type handler interface {
+	Set(key []byte, value []byte) error
+	Get(key []byte) ([]byte, error)
+	Del(key []byte) ([]byte, error)
+}
+
+func (mem *memDB) Set(key, value []byte) error {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+	err := mem.SetMap(key, value)
+	if err != nil {
+		return err
+	}
+	err = writeWAL(mem.wal.file, byte(Set), key, value)
+	if err != nil {
+		return err
+	}
+	fmt.Println("OK")
+
+	return nil
+}
+func (mem *memDB) Get(key []byte) ([]byte, error) {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	if v, ok := mem.values.Get(string(key)); ok {
+		entry := v.(entry)
+		if entry.op == del {
+			return nil, errors.New("Key not found")
+		}
+		fmt.Println(mem.values.Len())
+		return entry.value.([]byte), nil
+	}
+	//MODIFY THIS TO GET FROM SST FILES
+
+	return nil, errors.New("Key not found")
+}
+func (mem *memDB) Del(key []byte) ([]byte, error) {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	v, err := mem.DelMap(key)
+	if err != nil {
+		return nil, errors.New("Key not found")
+	}
+
+	err = writeWAL(mem.wal.file, byte(Del), []byte(key), v)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("OK")
+
+	return v, errors.New("Key not found")
+}
+
+func (re *Repl) parseCmd(buf []byte) (Cmd, []string, error) {
+	line := string(buf)
+	elements := strings.Fields(line)
+	if len(elements) < 1 {
+		return Unk, nil, Empty
+	}
+
+	switch elements[0] {
+	case "get":
+		return Get, elements[1:], nil
+	case "set":
+		return Set, elements[1:], nil
+	case "del":
+		return Del, elements[1:], nil
+	case "exit":
+		return Ext, nil, nil
+	default:
+		return Unk, nil, nil
+	}
+}
+
+func (re *Repl) Start() {
+	scanner := bufio.NewScanner(re.in)
+
+	for {
+		fmt.Fprint(re.out, "> ")
+		if !scanner.Scan() {
+			break
+		}
+		buf := scanner.Bytes()
+		cmd, elements, err := re.parseCmd(buf)
+		if err != nil {
+			fmt.Fprintf(re.out, "%s\n", err.Error())
+			continue
+		}
+		switch cmd {
+		case Get:
+			if len(elements) != 1 {
+				fmt.Fprintf(re.out, "Expected 1 argument, received: %d\n", len(elements))
+				continue
+			}
+			v, err := re.db.GetMap([]byte(elements[0]))
+			if err != nil {
+				fmt.Fprintln(re.out, err.Error())
+				continue
+			}
+			fmt.Fprintln(re.out, string(v))
+		case Set:
+			if len(elements) != 2 {
+				fmt.Printf("Expected 2 arguments, received: %d\n", len(elements))
+				continue
+			}
+			err := re.db.SetMap([]byte(elements[0]), []byte(elements[1]))
+			if err != nil {
+				fmt.Fprintln(re.out, err.Error())
+				continue
+			}
+		case Del:
+			if len(elements) != 1 {
+				fmt.Printf("Expected 1 argument, received: %d\n", len(elements))
+				continue
+			}
+			v, err := re.db.DelMap([]byte(elements[0]))
+			if err != nil {
+				fmt.Fprintln(re.out, err.Error())
+				continue
+			}
+			fmt.Fprintln(re.out, string(v))
+		case Ext:
+			fmt.Fprintln(re.out, "Bye!")
+			return
+		case Unk:
+			fmt.Fprintln(re.out, "Unknown command")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(re.out, err.Error())
+	} else {
+		fmt.Fprintln(re.out, "Bye!")
+	}
+}
 
 func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
 	mem.mu.Lock()
