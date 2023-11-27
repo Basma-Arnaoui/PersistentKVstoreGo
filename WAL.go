@@ -155,14 +155,10 @@ func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
 
 		// Write operation byte
 		binary.Write(sstFile, binary.LittleEndian, op)
-
-		// Write key
-		binary.Write(sstFile, binary.LittleEndian, uint32(len(key)))
-		sstFile.Write(key)
-
-		// Write value
-		binary.Write(sstFile, binary.LittleEndian, uint32(len(value)))
 		sstFile.Write(value)
+		binary.Write(sstFile, binary.LittleEndian, uint32(len(value)))
+		sstFile.Write(key)
+		binary.Write(sstFile, binary.LittleEndian, uint32(len(key)))
 
 		mem.wal.watermark, err = mem.wal.file.Seek(0, os.SEEK_CUR)
 		if err != nil {
