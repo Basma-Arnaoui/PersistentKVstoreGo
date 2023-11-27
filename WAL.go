@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/elliotchance/orderedmap"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -102,7 +104,6 @@ func (mem *memDB) readCommand(offset int64, wal *walFile) (int64, error) {
 }
 
 func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
-	fmt.Println("ghanflushiw")
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
@@ -135,7 +136,12 @@ func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
 	for {
 		var op byte
 		if err := binary.Read(mem.wal.file, binary.LittleEndian, &op); err != nil {
-			break
+			if err == io.EOF {
+				break
+			} else {
+				fmt.Println("error khayba yarbi matl3ch")
+				return err
+			}
 		}
 
 		var lenKey, lenValue uint32
@@ -159,24 +165,23 @@ func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
 		sstFile.Write(value)
 
 		mem.wal.watermark, err = mem.wal.file.Seek(0, os.SEEK_CUR)
+		if err != nil {
+			return err
+		}
 
 		entryCount++
 	}
-	fmt.Println("bBBBBBB")
+	mem.values = orderedmap.NewOrderedMap()
+
 	// Seek back to the beginning to write entry count
-	_, err = sstFile.Seek(int64(binary.Size(magicNumber)), os.SEEK_SET)
+	_, err = sstFile.Seek(int64(binary.Size(magicNumber)), os.SEEK_CUR)
+
 	if err != nil {
 		return err
 	}
-
 	binary.Write(sstFile, binary.LittleEndian, entryCount)
-	fmt.Println("AAAAA")
 
-	// Update the watermark to the current position after processing all commands
-	if err != nil {
-		return err
-	}
-	fmt.Println("tflusha")
+	fmt.Println("wslna lkher")
 	return nil
 }
 
