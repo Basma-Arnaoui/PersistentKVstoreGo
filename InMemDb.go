@@ -31,6 +31,18 @@ const (
 	Empty Error = iota
 )
 
+type operation int
+
+const (
+	set operation = iota
+	del
+)
+
+type entry struct {
+	value interface{}
+	op    operation
+}
+
 type DB interface {
 	Set(key []byte, value []byte) error
 	Get(key []byte) ([]byte, error)
@@ -47,8 +59,8 @@ func (mem *memDB) Set(key, value []byte) error {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
-	mem.values.Set(string(key), value)
-	err := writeWAL(mem.wal.file, byte(Set), []byte(key), []byte(value))
+	mem.values.Set(string(key), entry{value: value, op: set})
+	err := writeWAL(mem.wal.file, byte(Set), key, value)
 	if err != nil {
 		return err
 	}
@@ -62,8 +74,12 @@ func (mem *memDB) Get(key []byte) ([]byte, error) {
 	defer mem.mu.Unlock()
 
 	if v, ok := mem.values.Get(string(key)); ok {
+		entry := v.(entry)
+		if entry.op == del {
+			return nil, errors.New("Key not found")
+		}
 		fmt.Println(mem.values.Len())
-		return v.([]byte), nil
+		return entry.value.([]byte), nil
 	}
 
 	return nil, errors.New("Key not found")
@@ -74,15 +90,24 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	defer mem.mu.Unlock()
 
 	if v, ok := mem.values.Get(string(key)); ok {
-		mem.values.Delete(string(key))
-		err := writeWAL(mem.wal.file, byte(Del), []byte(key), v.([]byte))
-		if err != nil {
-			return nil, err
+		oldEntry := v.(entry)
+
+		// Update the entry with the delete operation
+		newEntry := entry{value: oldEntry.value, op: del}
+		mem.values.Set(string(key), newEntry)
+
+		if oldEntry.op != del {
+			err := writeWAL(mem.wal.file, byte(Del), []byte(key), oldEntry.value.([]byte))
+			if err != nil {
+				return nil, err
+			}
 		}
+
 		fmt.Println("OK")
-		return v.([]byte), nil
+		return oldEntry.value.([]byte), nil
 	}
-	return nil, errors.New("Key doesn't exist")
+
+	return nil, errors.New("Key not found")
 }
 
 func NewInMem(walFileName string) (*memDB, error) {
@@ -142,7 +167,7 @@ func (re *Repl) Start() {
 		switch cmd {
 		case Get:
 			if len(elements) != 1 {
-				fmt.Fprintf(re.out, "Expected 1 arguments, received: %d\n", len(elements))
+				fmt.Fprintf(re.out, "Expected 1 argument, received: %d\n", len(elements))
 				continue
 			}
 			v, err := re.db.Get([]byte(elements[0]))
@@ -163,7 +188,7 @@ func (re *Repl) Start() {
 			}
 		case Del:
 			if len(elements) != 1 {
-				fmt.Printf("Expected 1 arguments, received: %d\n", len(elements))
+				fmt.Printf("Expected 1 argument, received: %d\n", len(elements))
 				continue
 			}
 			v, err := re.db.Del([]byte(elements[0]))
@@ -176,7 +201,7 @@ func (re *Repl) Start() {
 			fmt.Fprintln(re.out, "Bye!")
 			return
 		case Unk:
-			fmt.Fprintln(re.out, "Unkown command")
+			fmt.Fprintln(re.out, "Unknown command")
 		}
 	}
 
