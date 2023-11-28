@@ -9,6 +9,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
+)
+
+const flushInterval = time.Minute / 4
+
+const (
+	magicNumber = 123456789
 )
 
 type handler interface {
@@ -67,6 +74,24 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	return v, errors.New("Key not found")
 }
 
+func NewInMem(walFileName string) (*memDB, error) {
+	walFileInstance, err := os.Create(walFileName)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &memDB{
+		values: orderedmap.NewOrderedMap(),
+		wal:    &walFile{file: walFileInstance},
+	}, nil
+}
+func instantiateWal(mem *memDB) error {
+	if _, err := mem.wal.file.WriteAt(make([]byte, 0), 0); err != nil {
+		return err
+	}
+	return nil
+}
 func (re *Repl) parseCmd(buf []byte) (Cmd, []string, error) {
 	line := string(buf)
 	elements := strings.Fields(line)
@@ -149,8 +174,18 @@ func (re *Repl) Start() {
 		fmt.Fprintln(re.out, "Bye!")
 	}
 }
+func (mem *memDB) startFlushTimer() {
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
 
-func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
+	for {
+		select {
+		case <-ticker.C:
+			mem.flushToSST()
+		}
+	}
+}
+func (mem *memDB) flushToSSTFromMap(watermark int64) error {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
@@ -228,5 +263,90 @@ func (mem *memDB) flushToSSTFromWatermark(watermark int64) error {
 }
 
 func (mem *memDB) flushToSST() error {
-	return mem.flushToSSTFromWatermark(mem.wal.watermark)
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	// Increment and get the current SST file number
+	sstFileMutex.Lock()
+	sstFileNumber++
+	currentSSTFileNumber := sstFileNumber
+	sstFileMutex.Unlock()
+
+	// Generate SST file name with the current number
+	sstFileName := fmt.Sprintf("sst%d.txt", currentSSTFileNumber)
+
+	sstFile, err := os.Create(sstFileName)
+	if err != nil {
+		return err
+	}
+	defer sstFile.Close()
+
+	// Write magic number
+	binary.Write(sstFile, binary.LittleEndian, magicNumber)
+
+	// Write smallest key placeholder (to be updated later)
+	smallestKeyOffset := int64(binary.Size(magicNumber))
+	_, err = sstFile.WriteAt(make([]byte, 8), smallestKeyOffset)
+	if err != nil {
+		return err
+	}
+
+	// Write biggest key placeholder (to be updated later)
+	biggestKeyOffset := int64(binary.Size(magicNumber) + 8)
+	_, err = sstFile.WriteAt(make([]byte, 8), biggestKeyOffset)
+	if err != nil {
+		return err
+	}
+
+	// Write commands
+	var smallestKey, biggestKey []byte
+	entryCount := uint32(0)
+
+	// Use Keys function to get a slice of keys
+	keys := mem.values.Keys()
+
+	// Manual iteration through the ordered map using the keys slice
+	for _, key := range keys {
+		value, _ := mem.values.Get(key)
+		entry := value.(entry)
+
+		if entryCount == 0 {
+			smallestKey = []byte(key.(string))
+		}
+		biggestKey = []byte(key.(string))
+
+		// Write operation byte
+		binary.Write(sstFile, binary.LittleEndian, entry.op)
+
+		// Write key
+		keyBytes := []byte(key.(string))
+		binary.Write(sstFile, binary.LittleEndian, uint32(len(keyBytes)))
+		sstFile.Write(keyBytes)
+
+		// Write value
+		valueBytes := entry.value.([]byte)
+		binary.Write(sstFile, binary.LittleEndian, uint32(len(valueBytes)))
+		sstFile.Write(valueBytes)
+
+		entryCount++
+	}
+
+	// Update smallest and biggest key
+	_, err = sstFile.WriteAt(smallestKey, smallestKeyOffset)
+	if err != nil {
+		return err
+	}
+	_, err = sstFile.WriteAt(biggestKey, biggestKeyOffset)
+	if err != nil {
+		return err
+	}
+
+	// Seek back to the beginning to write entry count
+	_, err = sstFile.Seek(int64(binary.Size(magicNumber)), os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+	binary.Write(sstFile, binary.LittleEndian, entryCount)
+
+	return nil
 }

@@ -85,6 +85,7 @@ func readSSTFile(filename string) error {
 
 func main() {
 	db, err := NewInMem("wal.txt")
+	instantiateWal(db)
 
 	if err != nil {
 		fmt.Println("Error creating in-memory DB:", err)

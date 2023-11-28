@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/elliotchance/orderedmap"
 	"io"
-	"os"
 	"sync"
 )
 
@@ -87,18 +86,6 @@ func (mem *memDB) DelMap(key []byte) ([]byte, error) {
 	}
 
 	return nil, errors.New("Key not found")
-}
-
-func NewInMem(walFileName string) (*memDB, error) {
-	walFileInstance, err := os.Create(walFileName)
-	if err != nil {
-		return nil, err
-	}
-
-	return &memDB{
-		values: orderedmap.NewOrderedMap(),
-		wal:    &walFile{file: walFileInstance},
-	}, nil
 }
 
 type Repl struct {
