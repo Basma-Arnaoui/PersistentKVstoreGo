@@ -3,12 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"os"
-	"sync"
-)
-
-var (
-	sstFileNumber int
-	sstFileMutex  sync.Mutex
 )
 
 type walFile struct {
