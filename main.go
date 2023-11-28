@@ -83,27 +83,36 @@ func readSSTFile(filename string) error {
 	return nil
 }
 
+/*
+	func main() {
+		db, err := NewInMem("wal.txt")
+		instantiateWal(db)
+
+		if err != nil {
+			fmt.Println("Error creating in-memory DB:", err)
+			return
+		}
+		defer db.wal.file.Close()
+		go db.startFlushTimer()
+
+		repl := Repl{
+			db:  db,
+			in:  os.Stdin,
+			out: os.Stdout,
+		}
+
+		repl.Start()
+		err = readSSTFile("sst1.txt")
+		if err != nil {
+			fmt.Println("Error reading SST file:", err)
+		}
+		//select{}
+	}
+*/
 func main() {
-	db, err := NewInMem("wal.txt")
-	instantiateWal(db)
-
+	num, err := countSSTFiles()
 	if err != nil {
-		fmt.Println("Error creating in-memory DB:", err)
-		return
+		fmt.Println(err)
 	}
-	defer db.wal.file.Close()
-	go db.startFlushTimer()
-
-	repl := Repl{
-		db:  db,
-		in:  os.Stdin,
-		out: os.Stdout,
-	}
-
-	repl.Start()
-	err = readSSTFile("sst1.txt")
-	if err != nil {
-		fmt.Println("Error reading SST file:", err)
-	}
-	//select{}
+	fmt.Println(num)
 }
