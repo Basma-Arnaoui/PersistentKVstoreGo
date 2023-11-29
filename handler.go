@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/elliotchance/orderedmap"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -338,4 +339,74 @@ func UpToDate(wal *walFile) (bool, error) {
 
 	// Compare the stored watermark with the file size
 	return fileSize > 8 && uint64(fileSize)-8 == binary.LittleEndian.Uint64(storedWatermark), nil
+}
+
+func recoverFromWAL(mem *memDB) error {
+	// Check if the WAL is up to date
+	upToDate, err := UpToDate(mem.wal)
+	if err != nil {
+		return err
+	}
+
+	if upToDate {
+		fmt.Println("WAL is up to date. No recovery needed.")
+		return nil
+	}
+
+	// Get the current offset before reading commands
+	currentOffset, err := mem.wal.file.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		return err
+	}
+
+	// Seek to the beginning to read the stored watermark
+	_, err = mem.wal.file.Seek(0, os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+
+	// Read the stored watermark
+	storedWatermark := make([]byte, 8)
+	_, err = mem.wal.file.Read(storedWatermark)
+	if err != nil {
+		return err
+	}
+
+	// Execute commands below the watermark
+	for {
+		var op byte
+		if err := binary.Read(mem.wal.file, binary.LittleEndian, &op); err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				return err
+			}
+		}
+
+		var lenKey, lenValue uint32
+		binary.Read(mem.wal.file, binary.LittleEndian, &lenKey)
+		key := make([]byte, lenKey)
+		mem.wal.file.Read(key)
+
+		binary.Read(mem.wal.file, binary.LittleEndian, &lenValue)
+		value := make([]byte, lenValue)
+		mem.wal.file.Read(value)
+
+		switch op {
+		case byte(set):
+			mem.SetMap(key, value)
+		case byte(del):
+			mem.DelMap(key)
+		default:
+			return errors.New("Unknown operation in WAL")
+		}
+	}
+
+	// Restore the original offset after reading commands
+	_, err = mem.wal.file.Seek(currentOffset, os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
