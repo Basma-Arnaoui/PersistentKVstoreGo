@@ -183,7 +183,7 @@ func countSSTFiles() (int, error) {
 
 	count := 0
 	// Open the directory
-	dirEntries, err := os.ReadDir(dirPath)
+	dirEntries, err := os.ReadDir(dirPath + "/SSTFiles")
 	if err != nil {
 		fmt.Println("Error reading directory:", err)
 		return 0, err
@@ -228,7 +228,7 @@ func (mem *memDB) flushToSSTFromMap() error {
 	}
 
 	// Generate SST file name with the count of existing files
-	sstFileName := fmt.Sprintf("sst%d.txt", existingSSTFiles+1)
+	sstFileName := fmt.Sprintf("SSTFiles/sst%d.txt", existingSSTFiles+1)
 
 	sstFile, err := os.Create(sstFileName)
 	if err != nil {
@@ -303,5 +303,39 @@ func (mem *memDB) flushToSSTFromMap() error {
 	}
 	binary.Write(sstFile, binary.LittleEndian, entryCount)
 
+	// Seek to the end of the WAL file
+	walFileSize, err := mem.wal.file.Seek(0, os.SEEK_END)
+	if err != nil {
+		return err
+	}
+	mem.wal.watermark = walFileSize
+	// Update the watermark at the top of the WAL file
+	binary.Write(mem.wal.file, binary.LittleEndian, walFileSize)
+
 	return nil
+}
+
+func UpToDate(wal *walFile) (bool, error) {
+	// Get the size of the WAL file
+	fileInfo, err := wal.file.Stat()
+	if err != nil {
+		return false, err
+	}
+	fileSize := fileInfo.Size()
+
+	// Seek to the beginning to read the stored watermark
+	_, err = wal.file.Seek(0, os.SEEK_SET)
+	if err != nil {
+		return false, err
+	}
+
+	// Read the stored watermark
+	storedWatermark := make([]byte, 8)
+	_, err = wal.file.Read(storedWatermark)
+	if err != nil {
+		return false, err
+	}
+
+	// Compare the stored watermark with the file size
+	return fileSize > 8 && uint64(fileSize)-8 == binary.LittleEndian.Uint64(storedWatermark), nil
 }

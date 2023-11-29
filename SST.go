@@ -24,7 +24,7 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 	// Iterate through SST files in reverse order
 	for i := fileCount; i > 0; i-- {
-		sstFileName := fmt.Sprintf("sst%d.txt", i)
+		sstFileName := fmt.Sprintf("SSTFiles/sst%d.txt", i)
 		sstFile, err := os.Open(sstFileName)
 		if err != nil {
 			return nil, err
