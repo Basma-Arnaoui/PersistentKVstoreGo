@@ -27,6 +27,7 @@ type handler interface {
 }
 
 func (mem *memDB) flushToSST() error {
+	fmt.Println("ghanflushi")
 	// Count existing SST files
 	existingSSTFiles, err := countSSTFiles()
 	if err != nil {
@@ -45,16 +46,23 @@ func (mem *memDB) flushToSST() error {
 	// Write magic number
 	binary.Write(sstFile, binary.LittleEndian, magicNumber)
 
-	// Write smallest key placeholder (to be updated later)
-	smallestKeyOffset := int64(binary.Size(magicNumber))
+	// Placeholder for smallest key offset
+	smallestKeyOffset := int64(binary.Size(magicNumber) + 8)
 	_, err = sstFile.WriteAt(make([]byte, 8), smallestKeyOffset)
 	if err != nil {
 		return err
 	}
 
-	// Write biggest key placeholder (to be updated later)
-	biggestKeyOffset := int64(binary.Size(magicNumber) + 8)
+	// Placeholder for biggest key offset
+	biggestKeyOffset := smallestKeyOffset + 8
 	_, err = sstFile.WriteAt(make([]byte, 8), biggestKeyOffset)
+	if err != nil {
+		return err
+	}
+
+	// Placeholder for entry count
+	entryCountOffset := biggestKeyOffset + 8
+	_, err = sstFile.WriteAt(make([]byte, 8), entryCountOffset)
 	if err != nil {
 		return err
 	}
@@ -102,8 +110,8 @@ func (mem *memDB) flushToSST() error {
 		return err
 	}
 
-	// Seek back to the beginning to write entry count
-	_, err = sstFile.Seek(int64(binary.Size(magicNumber)), os.SEEK_SET)
+	// Update entry count
+	_, err = sstFile.WriteAt(make([]byte, 8), entryCountOffset)
 	if err != nil {
 		return err
 	}
@@ -117,6 +125,9 @@ func (mem *memDB) flushToSST() error {
 	mem.wal.watermark = walFileSize
 	// Update the watermark at the top of the WAL file
 	binary.Write(mem.wal.file, binary.LittleEndian, walFileSize)
+
+	// Clear the ordered map
+	mem.values = orderedmap.NewOrderedMap()
 
 	return nil
 }
@@ -201,7 +212,7 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	fmt.Println("OK")
 	mem.checkSizeAndFlush()
 
-	return v, errors.New("Key not found")
+	return v, nil
 }
 
 func NewInMem() (*Repl, error) {
@@ -387,13 +398,13 @@ func recoverFromWAL(mem *memDB) error {
 	}
 
 	// Get the current offset before reading commands
-	currentOffset, err := mem.wal.file.Seek(0, os.SEEK_CUR)
+	currentOffset, err := mem.wal.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
 
 	// Seek to the beginning to read the stored watermark
-	_, err = mem.wal.file.Seek(0, os.SEEK_SET)
+	_, err = mem.wal.file.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
 	}
@@ -431,12 +442,12 @@ func recoverFromWAL(mem *memDB) error {
 		case byte(del):
 			mem.DelMap(key)
 		default:
-			return errors.New("Unknown operation in WAL")
+			fmt.Printf("Unknown operation in WAL: %v\n", op)
 		}
 	}
 
 	// Restore the original offset after reading commands
-	_, err = mem.wal.file.Seek(currentOffset, os.SEEK_SET)
+	_, err = mem.wal.file.Seek(currentOffset, io.SeekStart)
 	if err != nil {
 		return err
 	}
