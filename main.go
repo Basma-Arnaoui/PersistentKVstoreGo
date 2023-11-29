@@ -82,17 +82,63 @@ func readSSTFile(filename string) error {
 
 	return nil
 }
-
 func main() {
-	db, err := NewInMem("wal.txt")
-	instantiateWal(db)
+	repl, err := NewInMem()
+	if err != nil {
+		fmt.Println("Error creating REPL:", err)
+		return
+	}
+
+	// Perform recovery from WAL
+	err = recoverFromWAL(repl.handler.(*memDB))
+	if err != nil {
+		fmt.Println("Error recovering from WAL:", err)
+		return
+	}
+
+	// Start the REPL
+	repl.Start()
+
+	// Ensure the WAL file is closed when the program exits
+	defer func() {
+		if err := repl.handler.(*memDB).wal.file.Close(); err != nil {
+			fmt.Println("Error closing WAL file:", err)
+		}
+	}()
+}
+
+/*
+func main() {
+	// Create a memDB instance
+	memInstance := &memDB{
+		values: orderedmap.NewOrderedMap(),
+		wal:    &walFile{}, // You need to initialize walFile properly
+	}
+
+	// Create a Repl instance
+	repl := &Repl{
+		db:      memInstance,
+		handler: memInstance,
+		in:      os.Stdin,
+		out:     os.Stdout,
+	}
+
+	// Start the flush trigger goroutine
+	go memInstance.flushTrigger()
+
+	// Start the REPL
+	repl.Start()
+}*/
+/*
+func main() {
+	re, err := NewInMem("wal.txt")
 
 	if err != nil {
 		fmt.Println("Error creating in-memory DB:", err)
 		return
 	}
-	defer db.wal.file.Close()
-	go db.startFlushTimer()
+	defer db.
+	go db.()
 
 	repl := Repl{
 		db:  db,

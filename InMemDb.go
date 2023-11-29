@@ -88,9 +88,22 @@ func (mem *memDB) DelMap(key []byte) ([]byte, error) {
 	return nil, errors.New("Key not found")
 }
 
-type Repl struct {
-	db DB
+func (mem *memDB) flushTrigger() {
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
 
-	in  io.Reader
-	out io.Writer
+	// Check if the size of the ordered map exceeds 5
+	if mem.values.Len() >= flushThreshold {
+		err := mem.flushToSSTFromMap()
+		if err != nil {
+			fmt.Println("Error flushing to SST:", err)
+		}
+	}
+}
+
+type Repl struct {
+	db      DB
+	handler handler
+	in      io.Reader
+	out     io.Writer
 }

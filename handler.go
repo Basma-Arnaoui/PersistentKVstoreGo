@@ -14,6 +14,8 @@ import (
 
 const flushInterval = time.Minute / 4
 
+var flushThreshold = 5
+
 const (
 	magicNumber = 123456789
 )
@@ -25,6 +27,8 @@ type handler interface {
 }
 
 func (mem *memDB) Set(key, value []byte) error {
+	fmt.Printf("Set called with Key: %s, Value: %s\n", key, value)
+
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 	err := mem.SetMap(key, value)
@@ -43,6 +47,7 @@ func (mem *memDB) Get(key []byte) ([]byte, error) {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
+	// Check if the key is in the in-memory map
 	if v, ok := mem.values.Get(string(key)); ok {
 		entry := v.(entry)
 		if entry.op == del {
@@ -51,10 +56,16 @@ func (mem *memDB) Get(key []byte) ([]byte, error) {
 		fmt.Println(mem.values.Len())
 		return entry.value.([]byte), nil
 	}
-	//MODIFY THIS TO GET FROM SST FILES
 
-	return nil, errors.New("Key not found")
+	// If not found in in-memory map, attempt to get from SST files
+	sstValue, err := GetFromSST(key)
+	if err != nil {
+		return nil, errors.New("Key not found")
+	}
+
+	return sstValue, nil
 }
+
 func (mem *memDB) Del(key []byte) ([]byte, error) {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
@@ -74,30 +85,31 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	return v, errors.New("Key not found")
 }
 
-func NewInMem(walFileName string) (*memDB, error) {
-	walFileInstance, err := os.Create(walFileName)
-
+func NewInMem() (*Repl, error) {
+	walFileInstance, err := instantiateWal()
 	if err != nil {
 		return nil, err
 	}
 
-	return &memDB{
+	memInstance := &memDB{
 		values: orderedmap.NewOrderedMap(),
-		wal:    &walFile{file: walFileInstance},
+		wal:    walFileInstance,
+	}
+
+	return &Repl{
+		handler: memInstance,
+		in:      os.Stdin,
+		out:     os.Stdout,
 	}, nil
 }
-func instantiateWal(mem *memDB) error {
-	if _, err := mem.wal.file.WriteAt(make([]byte, 0), 0); err != nil {
-		return err
-	}
-	return nil
-}
+
 func (re *Repl) parseCmd(buf []byte) (Cmd, []string, error) {
 	line := string(buf)
 	elements := strings.Fields(line)
 	if len(elements) < 1 {
 		return Unk, nil, Empty
 	}
+	fmt.Println(elements)
 
 	switch elements[0] {
 	case "get":
@@ -133,7 +145,7 @@ func (re *Repl) Start() {
 				fmt.Fprintf(re.out, "Expected 1 argument, received: %d\n", len(elements))
 				continue
 			}
-			v, err := re.db.GetMap([]byte(elements[0]))
+			v, err := re.handler.Get([]byte(elements[0]))
 			if err != nil {
 				fmt.Fprintln(re.out, err.Error())
 				continue
@@ -144,7 +156,7 @@ func (re *Repl) Start() {
 				fmt.Printf("Expected 2 arguments, received: %d\n", len(elements))
 				continue
 			}
-			err := re.db.SetMap([]byte(elements[0]), []byte(elements[1]))
+			err := re.handler.Set([]byte(elements[0]), []byte(elements[1]))
 			if err != nil {
 				fmt.Fprintln(re.out, err.Error())
 				continue
@@ -154,7 +166,7 @@ func (re *Repl) Start() {
 				fmt.Printf("Expected 1 argument, received: %d\n", len(elements))
 				continue
 			}
-			v, err := re.db.DelMap([]byte(elements[0]))
+			v, err := re.handler.Del([]byte(elements[0]))
 			if err != nil {
 				fmt.Fprintln(re.out, err.Error())
 				continue

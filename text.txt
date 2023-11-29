@@ -1,7 +1,5 @@
-   ->KHSNI NGAD LBLAN DIAL ILA W93 MOCHKIL NFLUSHI DKCHI LI THT LWATERMARK
--> IF SIZE DIAL ORDERED MAP DONC ON DECLENCHE FUNCTION FLUSH
 -> number of sst files o tr9im dialhum
-
+-> nrjea get set o dkchi machi memdb.set wlkin chi leiba khra
 
 maerftch wacha nhtajha:func (mem *memDB) readCommand(offset int64, wal *walFile) (int64, error) {
                        	_, err := wal.file.Seek(offset, os.SEEK_SET)
