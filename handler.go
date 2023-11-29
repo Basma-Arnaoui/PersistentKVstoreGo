@@ -26,6 +26,19 @@ type handler interface {
 	Del(key []byte) ([]byte, error)
 }
 
+func (mem *memDB) checkSizeAndFlush() {
+	// Check if the size of the ordered map exceeds flushThreshold
+	if mem.values.Len() >= flushThreshold {
+		mem.mu.Lock()
+		err := mem.flushToSSTFromMap()
+		mem.mu.Unlock()
+
+		if err != nil {
+			fmt.Println("Error flushing to SST:", err)
+		}
+	}
+}
+
 func (mem *memDB) Set(key, value []byte) error {
 	fmt.Printf("Set called with Key: %s, Value: %s\n", key, value)
 
@@ -40,6 +53,7 @@ func (mem *memDB) Set(key, value []byte) error {
 		return err
 	}
 	fmt.Println("OK")
+	mem.checkSizeAndFlush()
 
 	return nil
 }
@@ -81,6 +95,7 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	}
 
 	fmt.Println("OK")
+	mem.checkSizeAndFlush()
 
 	return v, errors.New("Key not found")
 }
