@@ -14,7 +14,7 @@ import (
 
 const flushInterval = time.Minute / 4
 
-var flushThreshold = 5
+var flushThreshold = 3
 
 const (
 	magicNumber = 123456789
@@ -27,7 +27,6 @@ type handler interface {
 }
 
 func (mem *memDB) flushToSST() error {
-	fmt.Println("ghanflushi")
 	// Count existing SST files
 	existingSSTFiles, err := countSSTFiles()
 	if err != nil {
@@ -43,33 +42,18 @@ func (mem *memDB) flushToSST() error {
 	}
 	defer sstFile.Close()
 
-	// Write magic number
-	binary.Write(sstFile, binary.LittleEndian, magicNumber)
-
-	// Placeholder for smallest key offset
-	smallestKeyOffset := int64(binary.Size(magicNumber) + 8)
-	_, err = sstFile.WriteAt(make([]byte, 8), smallestKeyOffset)
-	if err != nil {
-		return err
-	}
-
-	// Placeholder for biggest key offset
-	biggestKeyOffset := smallestKeyOffset + 8
-	_, err = sstFile.WriteAt(make([]byte, 8), biggestKeyOffset)
-	if err != nil {
-		return err
-	}
-
 	// Placeholder for entry count
-	entryCountOffset := biggestKeyOffset + 8
-	_, err = sstFile.WriteAt(make([]byte, 8), entryCountOffset)
-	if err != nil {
+	entryCount := uint32(0)
+	entryCountBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(entryCountBytes, entryCount)
+
+	if _, err := sstFile.Write(entryCountBytes); err != nil {
 		return err
 	}
 
 	// Write commands
 	var smallestKey, biggestKey []byte
-	entryCount := uint32(0)
+	offset := int64(binary.Size(entryCount)) // Start offset after the entry count
 
 	// Use Keys function to get a slice of keys
 	keys := mem.values.Keys()
@@ -79,52 +63,52 @@ func (mem *memDB) flushToSST() error {
 		value, _ := mem.values.Get(key)
 		entry := value.(entry)
 
-		if entryCount == 0 {
-			smallestKey = []byte(key.(string))
-		}
-		biggestKey = []byte(key.(string))
-
-		// Write operation byte
-		binary.Write(sstFile, binary.LittleEndian, entry.op)
-
 		// Write key
 		keyBytes := []byte(key.(string))
-		binary.Write(sstFile, binary.LittleEndian, uint32(len(keyBytes)))
-		sstFile.Write(keyBytes)
+		keyLenBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(keyLenBytes, uint32(len(keyBytes)))
+
+		if _, err := sstFile.Write(keyLenBytes); err != nil {
+			return err
+		}
+		if _, err := sstFile.Write(keyBytes); err != nil {
+			return err
+		}
 
 		// Write value
 		valueBytes := entry.value.([]byte)
-		binary.Write(sstFile, binary.LittleEndian, uint32(len(valueBytes)))
-		sstFile.Write(valueBytes)
+		valueLenBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(valueLenBytes, uint32(len(valueBytes)))
+
+		if _, err := sstFile.Write(valueLenBytes); err != nil {
+			return err
+		}
+		if _, err := sstFile.Write(valueBytes); err != nil {
+			return err
+		}
 
 		entryCount++
+		offset += int64(4 + len(keyBytes) + 4 + len(valueBytes)) // key length + key + value length + value
+	}
+
+	// Update entry count
+	entryCountBytes = make([]byte, 4)
+	binary.LittleEndian.PutUint32(entryCountBytes, entryCount)
+	if _, err := sstFile.WriteAt(entryCountBytes, 0); err != nil {
+		return err
 	}
 
 	// Update smallest and biggest key
+	smallestKeyOffset := offset
 	_, err = sstFile.WriteAt(smallestKey, smallestKeyOffset)
 	if err != nil {
 		return err
 	}
+	biggestKeyOffset := offset + int64(len(smallestKey))
 	_, err = sstFile.WriteAt(biggestKey, biggestKeyOffset)
 	if err != nil {
 		return err
 	}
-
-	// Update entry count
-	_, err = sstFile.WriteAt(make([]byte, 8), entryCountOffset)
-	if err != nil {
-		return err
-	}
-	binary.Write(sstFile, binary.LittleEndian, entryCount)
-
-	// Seek to the end of the WAL file
-	walFileSize, err := mem.wal.file.Seek(0, os.SEEK_END)
-	if err != nil {
-		return err
-	}
-	mem.wal.watermark = walFileSize
-	// Update the watermark at the top of the WAL file
-	binary.Write(mem.wal.file, binary.LittleEndian, walFileSize)
 
 	// Clear the ordered map
 	mem.values = orderedmap.NewOrderedMap()
