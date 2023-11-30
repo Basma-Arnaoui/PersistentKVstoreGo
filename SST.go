@@ -36,6 +36,7 @@ func isEqual(slice1, slice2 []byte) bool {
 
 func GetFromSST(key []byte) ([]byte, error) {
 	fileCount, err := countSSTFiles()
+	fmt.Println("count sst ", fileCount)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +126,9 @@ func GetFromSST(key []byte) ([]byte, error) {
 			if foundValue != nil {
 				return foundValue, nil
 			}
+			return nil, errors.New("Key not found")
+
 		}
-		return nil, errors.New("Key not found")
 	}
 
 	if foundValue != nil {
