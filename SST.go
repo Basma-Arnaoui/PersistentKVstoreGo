@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 )
@@ -33,7 +34,6 @@ func isEqual(slice1, slice2 []byte) bool {
 
 	return true
 }
-
 func GetFromSST(key []byte) ([]byte, error) {
 	fileCount, err := countSSTFiles()
 	fmt.Println("count sst ", fileCount)
@@ -51,7 +51,9 @@ func GetFromSST(key []byte) ([]byte, error) {
 		}
 		defer sstFile.Close()
 
-		// Skip magic number
+		// Read magic number
+		magicNumber := make([]byte, 4)
+		sstFile.Read(magicNumber)
 
 		// Read entry count
 		var entryCount uint32
@@ -64,22 +66,28 @@ func GetFromSST(key []byte) ([]byte, error) {
 		var smallestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &smallestKeyLen)
 		smallestKey = make([]byte, smallestKeyLen)
-		sstFile.Read(smallestKey)
+		io.ReadFull(sstFile, smallestKey)
 		fmt.Println("smallest:", smallestKey)
+
 		// Read biggest key length
 		var biggestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &biggestKeyLen)
 		biggestKey = make([]byte, biggestKeyLen)
-		sstFile.Read(biggestKey)
+		io.ReadFull(sstFile, biggestKey)
 		fmt.Println("biggest:", biggestKey)
+
 		foundInFile := false
-		if (compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0) || (isEqual(key, smallestKey)) || isEqual(key, biggestKey) {
+		if (compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0) || isEqual(key, smallestKey) || isEqual(key, biggestKey) {
 			fmt.Println("dkhlna hna")
 			// Iterate through entries in the SST file
 			for j := 0; j < int(entryCount); j++ {
 				var op byte
 				if err := binary.Read(sstFile, binary.LittleEndian, &op); err != nil {
-					break // End of file
+					if err == io.EOF {
+						break // End of file
+					}
+					fmt.Printf("Error reading operation: %v\n", err)
+					break
 				}
 				fmt.Println("krina op", op)
 
@@ -93,8 +101,12 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 				// Read the key
 				readKey := make([]byte, lenKey)
-				n, err := sstFile.Read(readKey)
-				fmt.Printf("Read key (%d): %v, err: %v\n", n, readKey, err)
+				n, err := io.ReadFull(sstFile, readKey)
+				if err != nil || uint32(n) != lenKey {
+					fmt.Printf("Error reading key: %v\n", err)
+					break
+				}
+				fmt.Printf("Read key (%d): %v\n", n, readKey)
 
 				// Read the value length
 				if err := binary.Read(sstFile, binary.LittleEndian, &lenValue); err != nil {
@@ -105,8 +117,12 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 				// Read the value
 				readValue := make([]byte, lenValue)
-				n, err = sstFile.Read(readValue)
-				fmt.Printf("Read value (%d): %v, err: %v\n", n, readValue, err)
+				n, err = io.ReadFull(sstFile, readValue)
+				if err != nil || uint32(n) != lenValue {
+					fmt.Printf("Error reading value: %v\n", err)
+					break
+				}
+				fmt.Printf("Read value (%d): %v\n", n, readValue)
 
 				// Check if the key matches
 				if compareKeys(key, readKey) == 0 {
@@ -117,7 +133,8 @@ func GetFromSST(key []byte) ([]byte, error) {
 					} else {
 						foundValue = readValue
 					}
-					// Continue iterating to find the latest value
+					// Exit the loop as we found the key
+					break
 				}
 				fmt.Println("salina iteration")
 			}
@@ -127,7 +144,6 @@ func GetFromSST(key []byte) ([]byte, error) {
 				return foundValue, nil
 			}
 			return nil, errors.New("Key not found")
-
 		}
 	}
 
@@ -137,6 +153,18 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 	// Key not found in any SST file
 	return nil, errors.New("Key not found")
+}
+
+func calculateChecksumDuringIteration(keys [][]byte) uint32 {
+	// Implement your checksum calculation logic based on the keys during iteration
+	// For simplicity, let's assume a basic checksum for demonstration purposes
+	var checksum uint32
+	for _, key := range keys {
+		for _, char := range key {
+			checksum += uint32(char)
+		}
+	}
+	return checksum
 }
 
 func findSmallestBiggestKey(fileName string, offset int64) ([]byte, []byte) {

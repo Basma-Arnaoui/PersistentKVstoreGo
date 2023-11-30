@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/elliotchance/orderedmap"
+	"hash/crc32"
 	"io"
 	"os"
 	"strings"
@@ -13,8 +14,9 @@ import (
 )
 
 const flushInterval = time.Minute / 4
+const magicNumber = 0xABCD1234
 
-var flushThreshold = 50
+var flushThreshold = 3
 
 type handler interface {
 	Set(key []byte, value []byte) error
@@ -37,6 +39,12 @@ func (mem *memDB) flushToSST() error {
 		return err
 	}
 	defer sstFile.Close()
+
+	// Write magic number to the SST file
+	magicNumber := []byte{0xAA, 0xBB, 0xCC, 0xDD} // Choose your own magic number
+	if _, err := sstFile.Write(magicNumber); err != nil {
+		return err
+	}
 
 	// Write size of ordered map to the SST file
 	size := mem.values.Len()
@@ -70,6 +78,9 @@ func (mem *memDB) flushToSST() error {
 	if _, err := sstFile.Write([]byte(biggestKey)); err != nil {
 		return err
 	}
+
+	// Initialize checksum
+	checksum := crc32.NewIEEE()
 
 	// Write keys and values to the SST file
 	for _, key := range keys {
@@ -105,6 +116,18 @@ func (mem *memDB) flushToSST() error {
 		if _, err := sstFile.Write(valueBytes); err != nil {
 			return err
 		}
+
+		// Update checksum
+		checksum.Write(keyBytes)
+		checksum.Write([]byte{opByte})
+		checksum.Write(valueBytes)
+	}
+
+	// Get and write checksum at the end of the file
+	checksumBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(checksumBytes, checksum.Sum32())
+	if _, err := sstFile.Write(checksumBytes); err != nil {
+		return err
 	}
 
 	// Update the watermark in the WAL file

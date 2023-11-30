@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"sync"
 )
 
@@ -10,6 +9,7 @@ import (
 var mem *memDB
 var memMutex sync.Mutex
 
+/*
 func main() {
 	repl, _ := NewInMem()
 	mem = repl.handler.(*memDB)
@@ -72,9 +72,9 @@ func DelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(value)
-}
+}*/
 
-/*func main() {
+func main() {
 	repl, err := NewInMem()
 	if err != nil {
 		fmt.Println("Error creating REPL:", err)
