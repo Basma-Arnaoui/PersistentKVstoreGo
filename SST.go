@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -31,37 +32,29 @@ func GetFromSST(key []byte) ([]byte, error) {
 		}
 		defer sstFile.Close()
 
-		// Read magic number
-		var fileMagicNumber uint32
-		if err := binary.Read(sstFile, binary.LittleEndian, &fileMagicNumber); err != nil {
+		// Read entry count
+		var entryCount uint32
+		if err := binary.Read(sstFile, binary.LittleEndian, &entryCount); err != nil {
 			return nil, err
 		}
-
-		if fileMagicNumber != magicNumber {
-			return nil, errors.New("Invalid SST file format")
-		}
+		fmt.Println("entry ", entryCount)
 
 		// Read smallest key
 		var smallestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &smallestKeyLen)
 		smallestKey := make([]byte, smallestKeyLen)
 		sstFile.Read(smallestKey)
-
+		fmt.Println("samllest : ", smallestKey)
 		// Read biggest key
 		var biggestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &biggestKeyLen)
 		biggestKey := make([]byte, biggestKeyLen)
 		sstFile.Read(biggestKey)
-
+		fmt.Println("biggest ", biggestKey)
 		// Check if the key is within the range
 		if compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0 {
 			// Iterate through entries in the SST file
-			for {
-				var op byte
-				if err := binary.Read(sstFile, binary.LittleEndian, &op); err != nil {
-					break // End of file
-				}
-
+			for j := uint32(0); j < entryCount; j++ {
 				var lenKey, lenValue uint32
 				binary.Read(sstFile, binary.LittleEndian, &lenKey)
 				readKey := make([]byte, lenKey)
@@ -74,11 +67,7 @@ func GetFromSST(key []byte) ([]byte, error) {
 				// Check if the key matches
 				if compareKeys(key, readKey) == 0 {
 					// If the operation is a deletion, set foundValue to nil
-					if op == byte(0x01) {
-						foundValue = nil
-					} else {
-						foundValue = readValue
-					}
+					foundValue = readValue
 					// Continue iterating to find the latest value
 				}
 			}
@@ -91,4 +80,39 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 	// Key not found in any SST file
 	return nil, errors.New("Key not found")
+}
+
+func findSmallestBiggestKey(fileName string, offset int64) ([]byte, []byte) {
+	// Open the SST file
+	file, err := os.Open(fileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	// Seek to the offset
+	if _, err := file.Seek(offset, 0); err != nil {
+		log.Fatal(err)
+	}
+
+	// Read entry count
+	var entryCount uint32
+	if err := binary.Read(file, binary.LittleEndian, &entryCount); err != nil {
+		log.Fatal(err)
+	}
+
+	// Read smallest key
+	var smallestKeyLen uint32
+	binary.Read(file, binary.LittleEndian, &smallestKeyLen)
+	smallestKey := make([]byte, smallestKeyLen)
+	file.Read(smallestKey)
+	fmt.Println("samllest ", smallestKey)
+	// Read biggest key
+	var biggestKeyLen uint32
+	binary.Read(file, binary.LittleEndian, &biggestKeyLen)
+	biggestKey := make([]byte, biggestKeyLen)
+	file.Read(biggestKey)
+	fmt.Println("biggest : ", biggestKey)
+
+	return smallestKey, biggestKey
 }

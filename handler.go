@@ -16,10 +16,6 @@ const flushInterval = time.Minute / 4
 
 var flushThreshold = 3
 
-const (
-	magicNumber = 123456789
-)
-
 type handler interface {
 	Set(key []byte, value []byte) error
 	Get(key []byte) ([]byte, error)
@@ -115,7 +111,52 @@ func (mem *memDB) flushToSST() error {
 
 	return nil
 }
+func updateWALWatermark() error {
+	// Open the WAL file
+	walFile, err := os.OpenFile("wal.txt", os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer walFile.Close()
 
+	// Read the watermark value
+	var watermark uint32
+	if err := binary.Read(walFile, binary.LittleEndian, &watermark); err != nil {
+		return err
+	}
+
+	// Move the watermark to the end of the file
+	if _, err := walFile.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	if err := binary.Write(walFile, binary.LittleEndian, watermark); err != nil {
+		return err
+	}
+
+	// Update the watermark at the beginning of the file
+	if _, err := walFile.Seek(0, 0); err != nil {
+		return err
+	}
+	if err := binary.Write(walFile, binary.LittleEndian, watermark); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writeKeyToSSTFile(key []byte, sstFile *os.File) error {
+	keyLenBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(keyLenBytes, uint32(len(key)))
+
+	if _, err := sstFile.Write(keyLenBytes); err != nil {
+		return err
+	}
+	if _, err := sstFile.Write(key); err != nil {
+		return err
+	}
+
+	return nil
+}
 func (mem *memDB) flushToSSTFromMap() error {
 	// Acquire the lock
 	//mem.mu.Lock()
