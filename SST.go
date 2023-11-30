@@ -14,16 +14,13 @@ func compareKeys(key1, key2 []byte) int {
 }
 
 func GetFromSST(key []byte) ([]byte, error) {
-	// Get the number of SST files
 	fileCount, err := countSSTFiles()
 	if err != nil {
 		return nil, err
 	}
 
-	// Variable to store the found value
 	var foundValue []byte
 
-	// Iterate through SST files in reverse order
 	for i := fileCount; i > 0; i-- {
 		sstFileName := fmt.Sprintf("SSTFiles/sst%d.txt", i)
 		sstFile, err := os.Open(sstFileName)
@@ -32,44 +29,74 @@ func GetFromSST(key []byte) ([]byte, error) {
 		}
 		defer sstFile.Close()
 
+		// Skip magic number
+
 		// Read entry count
 		var entryCount uint32
 		if err := binary.Read(sstFile, binary.LittleEndian, &entryCount); err != nil {
 			return nil, err
 		}
-		fmt.Println("entry ", entryCount)
 
-		// Read smallest key
+		var smallestKey, biggestKey []byte
+		// Read smallest key length
 		var smallestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &smallestKeyLen)
-		smallestKey := make([]byte, smallestKeyLen)
+		smallestKey = make([]byte, smallestKeyLen)
 		sstFile.Read(smallestKey)
-		fmt.Println("samllest : ", smallestKey)
-		// Read biggest key
+		fmt.Println("smallest:", smallestKey)
+		// Read biggest key length
 		var biggestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &biggestKeyLen)
-		biggestKey := make([]byte, biggestKeyLen)
+		biggestKey = make([]byte, biggestKeyLen)
 		sstFile.Read(biggestKey)
-		fmt.Println("biggest ", biggestKey)
-		// Check if the key is within the range
-		if compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0 {
-			// Iterate through entries in the SST file
-			for j := uint32(0); j < entryCount; j++ {
-				var lenKey, lenValue uint32
-				binary.Read(sstFile, binary.LittleEndian, &lenKey)
-				readKey := make([]byte, lenKey)
-				sstFile.Read(readKey)
+		fmt.Println("biggest:", biggestKey)
 
-				binary.Read(sstFile, binary.LittleEndian, &lenValue)
+		if compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0 {
+			fmt.Println("dkhlna hna")
+			// Iterate through entries in the SST file
+			for j := 0; j < int(entryCount); j++ {
+				var op byte
+				if err := binary.Read(sstFile, binary.LittleEndian, &op); err != nil {
+					break // End of file
+				}
+				fmt.Println("krina op", op)
+
+				var lenKey, lenValue uint32
+				// Read the key length
+				if err := binary.Read(sstFile, binary.LittleEndian, &lenKey); err != nil {
+					fmt.Printf("Error reading key length: %v\n", err)
+					break
+				}
+				fmt.Println("krina keylen ", lenKey)
+
+				// Read the key
+				readKey := make([]byte, lenKey)
+				n, err := sstFile.Read(readKey)
+				fmt.Printf("Read key (%d): %v, err: %v\n", n, readKey, err)
+
+				// Read the value length
+				if err := binary.Read(sstFile, binary.LittleEndian, &lenValue); err != nil {
+					fmt.Printf("Error reading value length: %v\n", err)
+					break
+				}
+				fmt.Println("krina len value", lenValue)
+
+				// Read the value
 				readValue := make([]byte, lenValue)
-				sstFile.Read(readValue)
+				n, err = sstFile.Read(readValue)
+				fmt.Printf("Read value (%d): %v, err: %v\n", n, readValue, err)
 
 				// Check if the key matches
 				if compareKeys(key, readKey) == 0 {
 					// If the operation is a deletion, set foundValue to nil
-					foundValue = readValue
+					if op == byte(0x01) {
+						foundValue = nil
+					} else {
+						foundValue = readValue
+					}
 					// Continue iterating to find the latest value
 				}
+				fmt.Println("salina iteration")
 			}
 		}
 	}
