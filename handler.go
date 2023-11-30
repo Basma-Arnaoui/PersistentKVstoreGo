@@ -205,9 +205,45 @@ func (mem *memDB) Set(key, value []byte) error {
 
 	return nil
 }
+func (mem *memDB) SetWithNoLock(key, value []byte) error {
+	fmt.Printf("Set called with Key: %s, Value: %s\n", key, value)
+
+	err := mem.SetMap(key, value)
+	if err != nil {
+		return err
+	}
+	err = writeWAL(mem.wal.file, byte(Set), key, value)
+	if err != nil {
+		return err
+	}
+	fmt.Println("OK")
+	mem.checkSizeAndFlush()
+
+	return nil
+}
 func (mem *memDB) Get(key []byte) ([]byte, error) {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
+
+	// Check if the key is in the in-memory map
+	if v, ok := mem.values.Get(string(key)); ok {
+		entry := v.(entry)
+		if entry.op == del {
+			return nil, errors.New("Key not found")
+		}
+		fmt.Println(mem.values.Len())
+		return entry.value.([]byte), nil
+	}
+
+	// If not found in in-memory map, attempt to get from SST files
+	sstValue, err := GetFromSST(key)
+	if err != nil {
+		return nil, errors.New("Key not found")
+	}
+
+	return sstValue, nil
+}
+func (mem *memDB) GetWithNoLock(key []byte) ([]byte, error) {
 
 	// Check if the key is in the in-memory map
 	if v, ok := mem.values.Get(string(key)); ok {
@@ -232,11 +268,11 @@ func (mem *memDB) Del(key []byte) ([]byte, error) {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
 
-	value, er := mem.Get(key)
+	value, er := mem.GetWithNoLock(key)
 	if er != nil {
 		return nil, errors.New("Key not found")
 	}
-	er = mem.Set(key, value)
+	er = mem.SetWithNoLock(key, value)
 	if er != nil {
 		return nil, errors.New("Error setting")
 	}
