@@ -13,6 +13,7 @@ type walFile struct {
 }
 
 func writeWAL(wal *os.File, op byte, key, value []byte) error {
+	//write in the wal file
 	fmt.Printf("Writing to WAL. Op: %d, Key: %s, Value: %s\n", op, key, value)
 
 	lenKey := make([]byte, 4)
@@ -44,6 +45,7 @@ func writeWAL(wal *os.File, op byte, key, value []byte) error {
 
 	return nil
 }
+
 func instantiateWal() (*walFile, error) {
 	file, err := os.OpenFile("wal.txt", os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {

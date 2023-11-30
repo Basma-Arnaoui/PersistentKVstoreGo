@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/crc32"
-	"io"
-	"log"
 	"os"
 )
 
+// compareKeys compares two byte slices to determine their order, so i
+// can know if a key is in the sst before iterating through the keys.
 func compareKeys(key1, key2 []byte) int {
 	cmp := bytes.Compare(key1, key2)
 	switch {
@@ -22,6 +21,8 @@ func compareKeys(key1, key2 []byte) int {
 		return 0
 	}
 }
+
+// isEqual checks if two byte slices are equal.
 func isEqual(slice1, slice2 []byte) bool {
 	if len(slice1) != len(slice2) {
 		return false
@@ -36,7 +37,9 @@ func isEqual(slice1, slice2 []byte) bool {
 	return true
 }
 
+// GetFromSST retrieves a value from SST files based on the given key.
 func GetFromSST(key []byte) ([]byte, error) {
+	// Count the number of SST files
 	fileCount, err := countSSTFiles()
 	fmt.Println("count sst ", fileCount)
 	if err != nil {
@@ -45,6 +48,7 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 	var foundValue []byte
 
+	// Iterate through SST files
 	for i := fileCount; i > 0; i-- {
 		sstFileName := fmt.Sprintf("SSTFiles/sst%d.txt", i)
 		sstFile, err := os.Open(sstFileName)
@@ -52,10 +56,6 @@ func GetFromSST(key []byte) ([]byte, error) {
 			return nil, err
 		}
 		defer sstFile.Close()
-
-		// Read magic number
-		magicNumber := make([]byte, 4)
-		sstFile.Read(magicNumber)
 
 		// Read entry count
 		var entryCount uint32
@@ -67,34 +67,28 @@ func GetFromSST(key []byte) ([]byte, error) {
 		// Read smallest key length
 		var smallestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &smallestKeyLen)
+
 		smallestKey = make([]byte, smallestKeyLen)
-		io.ReadFull(sstFile, smallestKey)
-		fmt.Println("smallest:", smallestKey)
+		sstFile.Read(smallestKey)
 
 		// Read biggest key length
 		var biggestKeyLen uint32
 		binary.Read(sstFile, binary.LittleEndian, &biggestKeyLen)
 		biggestKey = make([]byte, biggestKeyLen)
-		io.ReadFull(sstFile, biggestKey)
-		fmt.Println("biggest:", biggestKey)
-
-		// Initialize checksum
-		checksum := crc32.NewIEEE()
+		sstFile.Read(biggestKey)
 
 		foundInFile := false
+
+		// Check if the key is within the range of smallest and biggest keys
 		if (compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0) || isEqual(key, smallestKey) || isEqual(key, biggestKey) {
-			fmt.Println("dkhlna hna")
+
 			// Iterate through entries in the SST file
 			for j := 0; j < int(entryCount); j++ {
+
 				var op byte
 				if err := binary.Read(sstFile, binary.LittleEndian, &op); err != nil {
-					if err == io.EOF {
-						break // End of file
-					}
-					fmt.Printf("Error reading operation: %v\n", err)
-					break
+					break // End of file
 				}
-				fmt.Println("krina op", op)
 
 				var lenKey, lenValue uint32
 				// Read the key length
@@ -102,39 +96,21 @@ func GetFromSST(key []byte) ([]byte, error) {
 					fmt.Printf("Error reading key length: %v\n", err)
 					break
 				}
-				fmt.Println("krina keylen ", lenKey)
 
 				// Read the key
 				readKey := make([]byte, lenKey)
-				n, err := io.ReadFull(sstFile, readKey)
-				if err != nil || uint32(n) != lenKey {
-					fmt.Printf("Error reading key: %v\n", err)
-					break
-				}
-				fmt.Printf("Read key (%d): %v\n", n, readKey)
-
-				// Update checksum
-				checksum.Write(readKey)
-				checksum.Write([]byte{op})
+				n, err := sstFile.Read(readKey)
+				fmt.Printf("Read key (%d): %v, err: %v\n", n, readKey, err)
 
 				// Read the value length
 				if err := binary.Read(sstFile, binary.LittleEndian, &lenValue); err != nil {
 					fmt.Printf("Error reading value length: %v\n", err)
 					break
 				}
-				fmt.Println("krina len value", lenValue)
 
 				// Read the value
 				readValue := make([]byte, lenValue)
-				n, err = io.ReadFull(sstFile, readValue)
-				if err != nil || uint32(n) != lenValue {
-					fmt.Printf("Error reading value: %v\n", err)
-					break
-				}
-				fmt.Printf("Read value (%d): %v\n", n, readValue)
-
-				// Update checksum
-				checksum.Write(readValue)
+				n, err = sstFile.Read(readValue)
 
 				// Check if the key matches
 				if compareKeys(key, readKey) == 0 {
@@ -145,21 +121,9 @@ func GetFromSST(key []byte) ([]byte, error) {
 					} else {
 						foundValue = readValue
 					}
-					// Exit the loop as we found the key
-					break
+					// Continue iterating to find the latest value
 				}
-				fmt.Println("salina iteration")
 			}
-		}
-
-		// Read and compare checksum
-		fileChecksumBytes := make([]byte, 4)
-		sstFile.Read(fileChecksumBytes)
-		fileChecksum := binary.LittleEndian.Uint32(fileChecksumBytes)
-		calculatedChecksum := checksum.Sum32()
-
-		if calculatedChecksum != fileChecksum {
-			return nil, errors.New("SST file is corrupted")
 		}
 
 		if foundInFile {
@@ -176,50 +140,4 @@ func GetFromSST(key []byte) ([]byte, error) {
 
 	// Key not found in any SST file
 	return nil, errors.New("Key not found")
-}
-func calculateChecksumDuringIteration(keys [][]byte) uint32 {
-	// Implement your checksum calculation logic based on the keys during iteration
-	// For simplicity, let's assume a basic checksum for demonstration purposes
-	var checksum uint32
-	for _, key := range keys {
-		for _, char := range key {
-			checksum += uint32(char)
-		}
-	}
-	return checksum
-}
-
-func findSmallestBiggestKey(fileName string, offset int64) ([]byte, []byte) {
-	// Open the SST file
-	file, err := os.Open(fileName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	// Seek to the offset
-	if _, err := file.Seek(offset, 0); err != nil {
-		log.Fatal(err)
-	}
-
-	// Read entry count
-	var entryCount uint32
-	if err := binary.Read(file, binary.LittleEndian, &entryCount); err != nil {
-		log.Fatal(err)
-	}
-
-	// Read smallest key
-	var smallestKeyLen uint32
-	binary.Read(file, binary.LittleEndian, &smallestKeyLen)
-	smallestKey := make([]byte, smallestKeyLen)
-	file.Read(smallestKey)
-	fmt.Println("samllest ", smallestKey)
-	// Read biggest key
-	var biggestKeyLen uint32
-	binary.Read(file, binary.LittleEndian, &biggestKeyLen)
-	biggestKey := make([]byte, biggestKeyLen)
-	file.Read(biggestKey)
-	fmt.Println("biggest : ", biggestKey)
-
-	return smallestKey, biggestKey
 }

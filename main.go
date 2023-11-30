@@ -2,28 +2,52 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 )
 
-// memDB is assumed to be your in-memory database implementation
+// memDB is my in-memory database implementation
 var mem *memDB
 var memMutex sync.Mutex
 
-/*
 func main() {
-	repl, _ := NewInMem()
-	mem = repl.handler.(*memDB)
+	// New memdb
+	repl, err := NewInMem()
+	if err != nil {
+		fmt.Println("Error creating REPL:", err)
+		return
+	}
 
+	// Perform recovery from WAL
+	err = recoverFromWAL(repl.handler.(*memDB))
+	if err != nil {
+		fmt.Println("Error recovering from WAL:", err)
+		return
+	}
+
+	// API
 	http.HandleFunc("/get", GetHandler)
 	http.HandleFunc("/set", SetHandler)
 	http.HandleFunc("/del", DelHandler)
 
+	// Start the REPL
+	repl.Start()
+
+	// Ensure the WAL file is closed when the program exits
+	defer func() {
+		if err := repl.handler.(*memDB).wal.file.Close(); err != nil {
+			fmt.Println("Error closing WAL file:", err)
+		}
+	}()
+
+	// Specify the port and start the server
 	port := 8080
 	fmt.Printf("Server is running on http://localhost:%d\n", port)
 	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
 func GetHandler(w http.ResponseWriter, r *http.Request) {
+	//Handles get requests
 	key := r.URL.Query().Get("key")
 
 	memMutex.Lock()
@@ -39,6 +63,7 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func SetHandler(w http.ResponseWriter, r *http.Request) {
+	//Handles set requests
 	key := r.URL.Query().Get("key")
 	value := r.URL.Query().Get("value")
 
@@ -60,6 +85,7 @@ func SetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func DelHandler(w http.ResponseWriter, r *http.Request) {
+	//handles del requests
 	key := r.URL.Query().Get("key")
 
 	memMutex.Lock()
@@ -72,8 +98,11 @@ func DelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(value)
-}*/
+}
 
+//THIS IS ANOTHER MAIN WHERE THERE IS NOT API
+
+/*
 func main() {
 	repl, err := NewInMem()
 	if err != nil {
@@ -98,58 +127,4 @@ func main() {
 		}
 	}()
 }
-
-/*
-func main() {
-	// Create a memDB instance
-	memInstance := &memDB{
-		values: orderedmap.NewOrderedMap(),
-		wal:    &walFile{}, // You need to initialize walFile properly
-	}
-
-	// Create a Repl instance
-	repl := &Repl{
-		db:      memInstance,
-		handler: memInstance,
-		in:      os.Stdin,
-		out:     os.Stdout,
-	}
-
-	// Start the flush trigger goroutine
-	go memInstance.flushTrigger()
-
-	// Start the REPL
-	repl.Start()
-}*/
-/*
-func main() {
-	re, err := NewInMem("wal.txt")
-
-	if err != nil {
-		fmt.Println("Error creating in-memory DB:", err)
-		return
-	}
-	defer db.
-	go db.()
-
-	repl := Repl{
-		db:  db,
-		in:  os.Stdin,
-		out: os.Stdout,
-	}
-
-	repl.Start()
-	err = readSSTFile("sst1.txt")
-	if err != nil {
-		fmt.Println("Error reading SST file:", err)
-	}
-	//select{}
-}
-
-/*func main() {
-	num, err := countSSTFiles()
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println(num)
-}*/
+*/
