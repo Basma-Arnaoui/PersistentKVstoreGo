@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"os"
@@ -34,6 +35,7 @@ func isEqual(slice1, slice2 []byte) bool {
 
 	return true
 }
+
 func GetFromSST(key []byte) ([]byte, error) {
 	fileCount, err := countSSTFiles()
 	fmt.Println("count sst ", fileCount)
@@ -76,6 +78,9 @@ func GetFromSST(key []byte) ([]byte, error) {
 		io.ReadFull(sstFile, biggestKey)
 		fmt.Println("biggest:", biggestKey)
 
+		// Initialize checksum
+		checksum := crc32.NewIEEE()
+
 		foundInFile := false
 		if (compareKeys(key, smallestKey) >= 0 && compareKeys(key, biggestKey) <= 0) || isEqual(key, smallestKey) || isEqual(key, biggestKey) {
 			fmt.Println("dkhlna hna")
@@ -108,6 +113,10 @@ func GetFromSST(key []byte) ([]byte, error) {
 				}
 				fmt.Printf("Read key (%d): %v\n", n, readKey)
 
+				// Update checksum
+				checksum.Write(readKey)
+				checksum.Write([]byte{op})
+
 				// Read the value length
 				if err := binary.Read(sstFile, binary.LittleEndian, &lenValue); err != nil {
 					fmt.Printf("Error reading value length: %v\n", err)
@@ -124,6 +133,9 @@ func GetFromSST(key []byte) ([]byte, error) {
 				}
 				fmt.Printf("Read value (%d): %v\n", n, readValue)
 
+				// Update checksum
+				checksum.Write(readValue)
+
 				// Check if the key matches
 				if compareKeys(key, readKey) == 0 {
 					foundInFile = true
@@ -139,6 +151,17 @@ func GetFromSST(key []byte) ([]byte, error) {
 				fmt.Println("salina iteration")
 			}
 		}
+
+		// Read and compare checksum
+		fileChecksumBytes := make([]byte, 4)
+		sstFile.Read(fileChecksumBytes)
+		fileChecksum := binary.LittleEndian.Uint32(fileChecksumBytes)
+		calculatedChecksum := checksum.Sum32()
+
+		if calculatedChecksum != fileChecksum {
+			return nil, errors.New("SST file is corrupted")
+		}
+
 		if foundInFile {
 			if foundValue != nil {
 				return foundValue, nil
@@ -154,7 +177,6 @@ func GetFromSST(key []byte) ([]byte, error) {
 	// Key not found in any SST file
 	return nil, errors.New("Key not found")
 }
-
 func calculateChecksumDuringIteration(keys [][]byte) uint32 {
 	// Implement your checksum calculation logic based on the keys during iteration
 	// For simplicity, let's assume a basic checksum for demonstration purposes
