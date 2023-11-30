@@ -14,7 +14,7 @@ import (
 
 const flushInterval = time.Minute / 4
 
-var flushThreshold = 3
+var flushThreshold = 50
 
 type handler interface {
 	Set(key []byte, value []byte) error
