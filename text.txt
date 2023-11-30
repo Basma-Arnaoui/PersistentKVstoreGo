@@ -1,4 +1,6 @@
-
+-<SST IKONO B DATE
+_< COMPACTION
+_< CHECKSUM
 -> number of sst files o tr9im dialhum
 
 maerftch wacha nhtajha:func (mem *memDB) readCommand(offset int64, wal *walFile) (int64, error) {

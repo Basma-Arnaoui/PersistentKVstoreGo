@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"sync"
 )
@@ -41,34 +39,18 @@ func GetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func SetHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	key := r.URL.Query().Get("key")
+	value := r.URL.Query().Get("value")
 
-	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	key, ok := data["key"].(string)
-	if !ok {
+	if key == "" {
 		http.Error(w, "Key not provided", http.StatusBadRequest)
-		return
-	}
-
-	value, ok := data["value"].(string)
-	if !ok {
-		http.Error(w, "Value not provided", http.StatusBadRequest)
 		return
 	}
 
 	memMutex.Lock()
 	defer memMutex.Unlock()
 
-	err = mem.Set([]byte(key), []byte(value))
+	err := mem.Set([]byte(key), []byte(value))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
