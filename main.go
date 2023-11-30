@@ -1,88 +1,98 @@
 package main
 
 import (
-	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"os"
+	"io/ioutil"
+	"net/http"
+	"sync"
 )
 
-func readSSTFile(filename string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+// memDB is assumed to be your in-memory database implementation
+var mem *memDB
+var memMutex sync.Mutex
 
-	// Get the file size
-	//fileInfo, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	//fileSize := fileInfo.Size()
-
-	// Seek to the end of the file
-	offset, err := file.Seek(0, os.SEEK_END)
-	if err != nil {
-		return err
-	}
-
-	// Read and print entries in reverse order
-	for {
-		// Move the offset back by the size of an entry
-		offset -= 4 // size of uint32 (entryCount)
-		_, err = file.Seek(offset, os.SEEK_SET)
-		if err != nil {
-			return err
-		}
-
-		// Read the operation byte
-		var op byte
-		if err := binary.Read(file, binary.LittleEndian, &op); err != nil {
-			return err
-		}
-
-		// Read the value length
-		var lenValue uint32
-		if err := binary.Read(file, binary.LittleEndian, &lenValue); err != nil {
-			return err
-		}
-
-		// Move the offset back by the length of value
-		offset -= int64(lenValue)
-		_, err = file.Seek(offset, os.SEEK_SET)
-		if err != nil {
-			return err
-		}
-
-		value := make([]byte, lenValue)
-		if _, err := file.Read(value); err != nil {
-			return err
-		}
-
-		// Read the key length
-		var lenKey uint32
-		if err := binary.Read(file, binary.LittleEndian, &lenKey); err != nil {
-			return err
-		}
-
-		// Move the offset back by the length of key
-		offset -= int64(lenKey)
-		_, err = file.Seek(offset, os.SEEK_SET)
-		if err != nil {
-			return err
-		}
-
-		key := make([]byte, lenKey)
-		if _, err := file.Read(key); err != nil {
-			return err
-		}
-
-		fmt.Printf("Op: %d, Key: %s, Value: %s\n", op, key, value)
-	}
-
-	return nil
-}
 func main() {
+	repl, _ := NewInMem()
+	mem = repl.handler.(*memDB)
+
+	http.HandleFunc("/get", GetHandler)
+	http.HandleFunc("/set", SetHandler)
+	http.HandleFunc("/del", DelHandler)
+
+	port := 8080
+	fmt.Printf("Server is running on http://localhost:%d\n", port)
+	http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+}
+
+func GetHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+
+	memMutex.Lock()
+	defer memMutex.Unlock()
+
+	result, err := mem.Get([]byte(key))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Write(result)
+}
+
+func SetHandler(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	key, ok := data["key"].(string)
+	if !ok {
+		http.Error(w, "Key not provided", http.StatusBadRequest)
+		return
+	}
+
+	value, ok := data["value"].(string)
+	if !ok {
+		http.Error(w, "Value not provided", http.StatusBadRequest)
+		return
+	}
+
+	memMutex.Lock()
+	defer memMutex.Unlock()
+
+	err = mem.Set([]byte(key), []byte(value))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("OK"))
+}
+
+func DelHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+
+	memMutex.Lock()
+	defer memMutex.Unlock()
+
+	value, err := mem.Del([]byte(key))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Write(value)
+}
+
+/*func main() {
 	repl, err := NewInMem()
 	if err != nil {
 		fmt.Println("Error creating REPL:", err)
